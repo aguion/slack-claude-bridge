@@ -4,7 +4,7 @@ import type {
   PermissionResult,
   PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
-import { describeTool, toolDetail } from './format.js';
+import { describeTool, toolPreview } from './format.js';
 
 type WebClient = App['client'];
 
@@ -21,6 +21,8 @@ interface Pending {
   settle: (result: PermissionResult, note: string) => void;
   toolName: string;
   suggestions: PermissionUpdate[];
+  /** Kept so the "Show full input" modal can render what was elided. */
+  input: Record<string, unknown>;
 }
 
 export interface ApprovalRequest {
@@ -70,12 +72,18 @@ export class ApprovalBroker {
               `*Approval needed* — \`${req.toolName}\`\n` +
               (req.title ? `${req.title}\n` : '') +
               (req.description ? `_${req.description}_\n` : '') +
-              toolDetail(req.toolName, req.input),
+              toolPreview(req.toolName, req.input),
           },
         },
         {
           type: 'actions',
           elements: [
+            {
+              type: 'button',
+              action_id: 'tool_details',
+              text: { type: 'plain_text', text: 'Show full input' },
+              value: nonce,
+            },
             {
               type: 'button',
               action_id: 'tool_approve',
@@ -149,8 +157,18 @@ export class ApprovalBroker {
         settle,
         toolName: req.toolName,
         suggestions: req.suggestions ?? [],
+        input: req.input,
       });
     });
+  }
+
+  /**
+   * The tool call behind a still-pending prompt, for the details modal.
+   * Undefined once the prompt has been decided or the bridge restarted.
+   */
+  peek(nonce: string): { toolName: string; input: Record<string, unknown> } | undefined {
+    const entry = this.pending.get(nonce);
+    return entry && { toolName: entry.toolName, input: entry.input };
   }
 
   /** Called by the Bolt action handler when a button is clicked. */

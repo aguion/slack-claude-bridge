@@ -97,15 +97,42 @@ export function describeTool(
   }
 }
 
-/** Full input rendering for the approval prompt, as a fenced code block. */
-export function toolDetail(
+/** The raw text behind a tool call — the command, or its full input JSON. */
+export function toolBody(
   toolName: string,
   input: Record<string, unknown>,
 ): string {
   if (toolName === 'Bash' && typeof input.command === 'string') {
-    return '```' + truncate(input.command, 1500) + '```';
+    return input.command;
   }
-  return '```' + truncate(JSON.stringify(input, null, 2), 1500) + '```';
+  return JSON.stringify(input, null, 2);
+}
+
+/**
+ * A single line of the tool's input for the approval prompt. The full text
+ * goes behind the "Show full input" button rather than into the thread, so a
+ * long command or a big Write payload doesn't bury the buttons.
+ */
+export function toolPreview(
+  toolName: string,
+  input: Record<string, unknown>,
+): string {
+  const lines = toolBody(toolName, input).split('\n');
+  const first = lines[0] ?? '';
+  const clipped = first.length > 160 ? `${first.slice(0, 160)}…` : first;
+  // A backtick inside inline code ends the span early; swap for a lookalike.
+  const safe = clipped.replace(/`/g, 'ˋ');
+  const hidden = lines.length - 1;
+  const more = hidden > 0 ? ` _+${hidden} more line${hidden === 1 ? '' : 's'}_` : '';
+  return `\`${safe}\`${more}`;
+}
+
+/** Full input rendering for the details modal, as a fenced code block. */
+export function toolDetail(
+  toolName: string,
+  input: Record<string, unknown>,
+): string {
+  return '```' + truncate(toolBody(toolName, input), 2800) + '```';
 }
 
 export function formatCost(usd: number | undefined): string {

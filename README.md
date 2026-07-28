@@ -92,10 +92,12 @@ that writes files, runs shell commands or touches the network posts buttons
 into the thread and **blocks until you answer**:
 
 > **Approval needed** — `Bash`
-> ```
-> npm test -- --watch=false
-> ```
-> [ Approve once ] [ Always in this session ] [ Deny ]
+> `npm test -- --watch=false` *+4 more lines*
+> [ Show full input ] [ Approve once ] [ Always in this session ] [ Deny ]
+
+- The preview is **one line**. **Show full input** opens a modal with the whole
+  command or input JSON, so a long payload can't bury the buttons. It reads the
+  pending prompt, so once you've decided, the input is gone.
 
 - **Always in this session** applies the SDK's own permission suggestion, so
   that class of call stops asking for the rest of that session only.

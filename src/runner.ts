@@ -52,8 +52,14 @@ export class Runner {
       await this.client.chat.postMessage({
         channel,
         thread_ts: threadTs,
+        // Claude writes standard Markdown — `**bold**`, `#` headings,
+        // `[text](url)` — none of which Slack's legacy mrkdwn understands, so
+        // in the plain `text` field it renders as literal punctuation. The
+        // `markdown` block takes CommonMark as-is. `text` stays as the
+        // notification fallback.
         text: part,
-        // Let Slack render markdown but never let Claude's output ping people.
+        blocks: [{ type: 'markdown', text: part }],
+        // Never let Claude's output ping people.
         parse: 'none',
         link_names: false,
       });

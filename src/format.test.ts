@@ -6,6 +6,9 @@ import {
   describeTool,
   formatCost,
   formatDuration,
+  toolBody,
+  toolDetail,
+  toolPreview,
   truncate,
 } from './format.js';
 
@@ -60,6 +63,51 @@ test('describeTool falls back to JSON for unknown tools', () => {
 test('describeTool tolerates missing and non-string fields', () => {
   assert.equal(describeTool('Bash', {}), '(no command)');
   assert.equal(describeTool('Read', { file_path: 42 }), '(no path)');
+});
+
+test('toolPreview is always a single line', () => {
+  const preview = toolPreview('Bash', { command: 'cd /tmp\nnpm test\nls -la' });
+
+  assert.equal(preview.includes('\n'), false, 'must stay on one line');
+  assert.match(preview, /^`cd \/tmp`/);
+  assert.match(preview, /\+2 more lines/);
+});
+
+test('toolPreview pluralises the hidden-line count', () => {
+  assert.match(toolPreview('Bash', { command: 'a\nb' }), /\+1 more line_/);
+  assert.doesNotMatch(toolPreview('Bash', { command: 'a\nb' }), /more lines/);
+});
+
+test('toolPreview says nothing about extra lines for a one-liner', () => {
+  assert.equal(toolPreview('Bash', { command: 'npm test' }), '`npm test`');
+});
+
+test('toolPreview neutralises backticks that would end the code span', () => {
+  const preview = toolPreview('Bash', { command: 'echo `whoami`' });
+
+  assert.equal(preview.startsWith('`'), true);
+  assert.equal(preview.endsWith('`'), true);
+  // Exactly the two delimiters — none left inside to close the span early.
+  assert.equal((preview.match(/`/g) ?? []).length, 2);
+});
+
+test('toolPreview clips a very long first line', () => {
+  const preview = toolPreview('Bash', { command: 'x'.repeat(500) });
+
+  assert.ok(preview.length < 200, `too long: ${preview.length}`);
+  assert.ok(preview.includes('…'));
+});
+
+test('toolBody returns the command for Bash and JSON otherwise', () => {
+  assert.equal(toolBody('Bash', { command: 'npm test' }), 'npm test');
+  assert.equal(toolBody('Read', { file_path: '/a' }), '{\n  "file_path": "/a"\n}');
+});
+
+test('toolDetail fences the full body and stays inside the section limit', () => {
+  const detail = toolDetail('Bash', { command: 'y'.repeat(5000) });
+
+  assert.ok(detail.startsWith('```') && detail.endsWith('```'));
+  assert.ok(detail.length <= 3000, `section blocks cap at 3000: ${detail.length}`);
 });
 
 test('formatCost and formatDuration render human units', () => {

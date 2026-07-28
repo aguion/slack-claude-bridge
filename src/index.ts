@@ -5,6 +5,7 @@ import { loadConfig, projectFor } from './config.js';
 import { SessionStore, ThreadQueue } from './store.js';
 import { ApprovalBroker, type Decision } from './approvals.js';
 import { Runner } from './runner.js';
+import { toolDetail } from './format.js';
 
 const config = loadConfig();
 
@@ -180,6 +181,57 @@ app.message(async ({ message }) => {
     user: m.user,
     text: m.text,
   });
+});
+
+// "Show full input" — the prompt only carries one line, so the rest lives in a
+// modal rather than in the thread where it would bury the buttons.
+app.action('tool_details', async ({ ack, body }) => {
+  await ack();
+  const b = body as {
+    trigger_id?: string;
+    user?: { id?: string };
+    channel?: { id?: string };
+    actions?: { value?: string }[];
+  };
+  const nonce = b.actions?.[0]?.value;
+  const userId = b.user?.id;
+  if (!nonce || !userId || !b.trigger_id) return;
+  if (!config.allowedUsers.has(userId)) return;
+
+  const call = approvals.peek(nonce);
+  if (!call) {
+    if (b.channel?.id) {
+      await app.client.chat
+        .postEphemeral({
+          channel: b.channel.id,
+          user: userId,
+          text: 'That prompt has already been decided, so its input is gone.',
+        })
+        .catch(() => undefined);
+    }
+    return;
+  }
+
+  await app.client.views
+    .open({
+      trigger_id: b.trigger_id,
+      view: {
+        type: 'modal',
+        // Slack caps modal titles at 24 characters.
+        title: { type: 'plain_text', text: call.toolName.slice(0, 24) },
+        close: { type: 'plain_text', text: 'Close' },
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: toolDetail(call.toolName, call.input),
+            },
+          },
+        ],
+      },
+    })
+    .catch((err) => console.error('views.open failed:', err));
 });
 
 // Approval buttons.
