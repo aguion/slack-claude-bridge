@@ -101,6 +101,10 @@ export class Runner {
           cwd: req.project.cwd,
           abortController: controller,
           maxTurns: this.config.maxTurns,
+          // 'auto' lets the SDK's classifier clear routine calls itself and
+          // only escalates what it can't — the Slack buttons stay in place for
+          // anything the classifier refuses to decide.
+          permissionMode: req.project.permissionMode ?? this.config.permissionMode,
           ...(req.project.model ? { model: req.project.model } : {}),
           ...(resumeId ? { resume: resumeId } : {}),
           // Defaults to ['project'] so the repo's CLAUDE.md is loaded. Note

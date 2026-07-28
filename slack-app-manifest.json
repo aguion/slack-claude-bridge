@@ -1,13 +1,18 @@
 {
   "display_information": {
-    "name": "Claude Code Bridge",
+    "name": "Marcel",
     "description": "Drive Claude Code on my laptop from Slack",
     "background_color": "#1f1f1f"
   },
   "features": {
     "bot_user": {
-      "display_name": "Claude Code",
+      "display_name": "Marcel",
       "always_online": false
+    },
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
     }
   },
   "oauth_config": {

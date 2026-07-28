@@ -15,6 +15,22 @@ export type SettingSource = 'user' | 'project' | 'local';
 
 const SETTING_SOURCES: readonly SettingSource[] = ['user', 'project', 'local'];
 
+/**
+ * How the SDK resolves tool permissions before falling back to a Slack prompt.
+ *
+ * `bypassPermissions` is deliberately not offered — it would disable the
+ * approval gate this bridge exists to provide, from a chat window.
+ */
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'auto';
+
+const PERMISSION_MODES: readonly PermissionMode[] = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'dontAsk',
+  'auto',
+];
+
 /** Per-channel project configuration, loaded from projects.json. */
 export interface ProjectConfig {
   /** Absolute path to the repo Claude should work in for this channel. */
@@ -25,6 +41,8 @@ export interface ProjectConfig {
   allowedTools?: string[];
   /** Model override, e.g. "claude-opus-4-6". Omit for the account default. */
   model?: string;
+  /** Permission mode override for this project. Falls back to the global one. */
+  permissionMode?: PermissionMode;
 }
 
 export interface Config {
@@ -47,6 +65,18 @@ export interface Config {
    * tools and skip the Slack prompt entirely.
    */
   settingSources: SettingSource[];
+  /**
+   * Default permission mode. `auto` runs the SDK's model classifier over each
+   * prompt and only escalates to Slack buttons when it can't clear the call
+   * itself — the same behaviour as the CLI. Per-project overrides win.
+   */
+  permissionMode: PermissionMode;
+  /**
+   * Whether DMs to the bot drive an agent. Off by default: a DM has no channel
+   * mapping of its own, so it always lands on the `default` project, which is
+   * easy to point somewhere you didn't intend.
+   */
+  allowDms: boolean;
 }
 
 function required(name: string): string {
@@ -96,6 +126,30 @@ function loadSettingSources(): SettingSource[] {
   return parsed as SettingSource[];
 }
 
+function boolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  throw new Error(`${name} must be true or false, got ${JSON.stringify(raw)}.`);
+}
+
+function parsePermissionMode(value: string, where: string): PermissionMode {
+  if (!PERMISSION_MODES.includes(value as PermissionMode)) {
+    const extra =
+      value === 'bypassPermissions'
+        ? ' bypassPermissions is refused on purpose: it would disable the ' +
+          'approval prompts that keep this bot from running anything a ' +
+          'Slack message asks for.'
+        : '';
+    throw new Error(
+      `${where} must be one of ${PERMISSION_MODES.join(', ')}, got ` +
+        `${JSON.stringify(value)}.${extra}`,
+    );
+  }
+  return value as PermissionMode;
+}
+
 function loadProjects(path: string): Record<string, ProjectConfig> {
   if (!existsSync(path)) {
     throw new Error(
@@ -125,6 +179,12 @@ function loadProjects(path: string): Record<string, ProjectConfig> {
     if (!statSync(project.cwd).isDirectory()) {
       throw new Error(
         `Project "${channel}" points at ${project.cwd}, which is not a directory.`,
+      );
+    }
+    if (project.permissionMode !== undefined) {
+      project.permissionMode = parsePermissionMode(
+        project.permissionMode,
+        `Project "${channel}" permissionMode`,
       );
     }
   }
@@ -158,6 +218,11 @@ export function loadConfig(): Config {
     approvalTimeoutSec: positiveNumber('APPROVAL_TIMEOUT_SEC', 300),
     maxTurns: positiveNumber('MAX_TURNS', 60),
     settingSources: loadSettingSources(),
+    permissionMode: parsePermissionMode(
+      process.env.PERMISSION_MODE?.trim() || 'auto',
+      'PERMISSION_MODE',
+    ),
+    allowDms: boolEnv('ALLOW_DMS', false),
   };
 }
 

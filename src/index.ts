@@ -152,6 +152,20 @@ app.message(async ({ message }) => {
   const isDm = m.channel_type === 'im';
   const threadTs = m.thread_ts ?? m.ts;
 
+  if (isDm && !config.allowDms) {
+    // Say so rather than ignoring, but only to people who could otherwise use
+    // the bot — everyone else stays unaware it's listening at all.
+    if (config.allowedUsers.has(m.user)) {
+      await app.client.chat.postMessage({
+        channel: m.channel,
+        text:
+          'DMs are disabled for this bridge. Mention me in a mapped channel ' +
+          'instead — a channel maps to a specific repo, a DM does not.',
+      });
+    }
+    return;
+  }
+
   // In channels, only react to threads we've already started — otherwise the
   // bot would answer every message in the room.
   if (!isDm && !sessions.has(m.channel, threadTs)) return;
@@ -216,6 +230,8 @@ console.log('Slack ↔ Claude Code bridge running (Socket Mode).');
 console.log(`  projects:  ${Object.keys(config.projects).join(', ')}`);
 console.log(`  allowlist: ${[...config.allowedUsers].join(', ')}`);
 console.log(`  state:     ${config.stateDir}`);
+console.log(`  approvals: ${config.permissionMode}`);
+console.log(`  dms:       ${config.allowDms ? 'allowed' : 'disabled'}`);
 console.log(
   `  settings:  ${
     config.settingSources.length

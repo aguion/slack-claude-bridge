@@ -61,7 +61,7 @@ npm run build
 npm start
 ```
 
-Then invite the bot: `/invite @Claude Code` in each mapped channel.
+Then invite the bot: `/invite @Marcel` in each mapped channel.
 
 Keep the Mac awake while it runs, or macOS will sleep the socket:
 
@@ -75,11 +75,11 @@ caffeinate -s npm start
 
 | In Slack | What happens |
 |---|---|
-| `@Claude Code why is the auth test flaky?` | Starts a session in that channel's repo |
+| `@Marcel why is the auth test flaky?` | Starts a session in that channel's repo |
 | *(reply in the thread)* `check the fixtures too` | Resumes the same session |
 | `stop` | Cancels the in-flight run **and drops anything queued behind it**; the session is kept |
 | `reset` | Forgets the session; next message starts fresh |
-| DM the bot | Uses the `default` project |
+| DM the bot | Refused by default — set `ALLOW_DMS=true` to use the `default` project |
 
 Each thread is its own session, so you can run several agents at once in
 different channels. Within a thread, messages queue and run one at a time —
@@ -102,6 +102,24 @@ into the thread and **blocks until you answer**:
 - Prompts are **fail-closed**: a timeout (default 5 min), a `stop`, or a click
   from someone not on the allowlist all resolve to *deny*. The agent never
   proceeds because nobody answered.
+
+### Permission mode
+
+`PERMISSION_MODE` decides how much reaches the buttons at all. Default `auto`,
+matching the CLI: a model classifier clears routine calls itself and only
+escalates what it won't decide, which still lands in Slack as a prompt.
+
+| Mode | Behaviour |
+|---|---|
+| `auto` (default) | Classifier approves routine calls; the rest prompt in Slack |
+| `default` | Every non-`allowedTools` call prompts in Slack |
+| `acceptEdits` | File edits auto-approved; commands and network still prompt |
+| `dontAsk` | Never prompts — denies anything not already pre-approved |
+| `plan` | Plans only, executes nothing |
+
+`bypassPermissions` is rejected on purpose: it would disable the approval gate
+this bridge exists to provide. Set per project with `"permissionMode"` in
+`projects.json`, which overrides the global value.
 
 To pre-approve more per repo, widen `allowedTools` for that project:
 
@@ -173,7 +191,7 @@ Run the tests with `npm test`.
 ## Troubleshooting
 
 **Bot doesn't respond to a mention.** It's probably not in the channel —
-`/invite @Claude Code`. Check the terminal for `Ignoring message from
+`/invite @Marcel`. Check the terminal for `Ignoring message from
 non-allowlisted user`, which means your member ID isn't in `.env`.
 
 **Thread replies ignored.** In channels the bridge only follows threads it
