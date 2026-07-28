@@ -1,0 +1,15 @@
+{
+  "C01ABCDEFGH": {
+    "label": "acme-api",
+    "cwd": "~/code/acme-api"
+  },
+  "C02IJKLMNOP": {
+    "label": "acme-web",
+    "cwd": "~/code/acme-web",
+    "allowedTools": ["Read", "Glob", "Grep", "TodoWrite", "Bash"]
+  },
+  "default": {
+    "label": "scratch",
+    "cwd": "~/code/scratch"
+  }
+}

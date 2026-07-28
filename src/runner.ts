@@ -1,0 +1,214 @@
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { App } from '@slack/bolt';
+import type { ApprovalBroker } from './approvals.js';
+import type { Config, ProjectConfig } from './config.js';
+import type { SessionStore } from './store.js';
+import { chunk, describeTool, formatCost, formatDuration } from './format.js';
+
+type WebClient = App['client'];
+
+export interface RunRequest {
+  channel: string;
+  threadTs: string;
+  userId: string;
+  prompt: string;
+  project: ProjectConfig;
+}
+
+/**
+ * Runs one Claude Code turn against a local repo and streams the result into a
+ * Slack thread.
+ *
+ * Session continuity comes from `resume`: the first message in a thread starts
+ * a fresh session, and every later message in that same thread picks it back
+ * up, so follow-ups like "no, use the other helper" land in context.
+ */
+export class Runner {
+  /** Live runs keyed by thread, so `stop` can cancel them. */
+  private active = new Map<string, AbortController>();
+
+  constructor(
+    private readonly client: WebClient,
+    private readonly config: Config,
+    private readonly sessions: SessionStore,
+    private readonly approvals: ApprovalBroker,
+  ) {}
+
+  /** Cancel the in-flight run for a thread. Returns false if none was running. */
+  cancel(channel: string, threadTs: string): boolean {
+    const key = `${channel}:${threadTs}`;
+    const controller = this.active.get(key);
+    if (!controller) return false;
+    controller.abort();
+    return true;
+  }
+
+  private async say(
+    channel: string,
+    threadTs: string,
+    text: string,
+  ): Promise<void> {
+    for (const part of chunk(text)) {
+      await this.client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: part,
+        // Let Slack render markdown but never let Claude's output ping people.
+        parse: 'none',
+        link_names: false,
+      });
+    }
+  }
+
+  private async context(
+    channel: string,
+    threadTs: string,
+    text: string,
+  ): Promise<void> {
+    await this.client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text,
+      blocks: [
+        { type: 'context', elements: [{ type: 'mrkdwn', text }] },
+      ],
+    });
+  }
+
+  async run(req: RunRequest): Promise<void> {
+    const key = `${req.channel}:${req.threadTs}`;
+    const controller = new AbortController();
+    this.active.set(key, controller);
+
+    const resumeId = this.sessions.get(req.channel, req.threadTs);
+    let sessionId = resumeId;
+    let sawText = false;
+
+    // Acknowledge immediately — agent turns can run for minutes, and silence
+    // in Slack is indistinguishable from a crashed bot.
+    await this.context(
+      req.channel,
+      req.threadTs,
+      resumeId
+        ? `:arrows_counterclockwise: Resuming in \`${req.project.label ?? req.project.cwd}\``
+        : `:sparkles: Starting in \`${req.project.label ?? req.project.cwd}\``,
+    );
+
+    try {
+      const response = query({
+        prompt: req.prompt,
+        options: {
+          cwd: req.project.cwd,
+          abortController: controller,
+          maxTurns: this.config.maxTurns,
+          ...(req.project.model ? { model: req.project.model } : {}),
+          ...(resumeId ? { resume: resumeId } : {}),
+          // Defaults to ['project'] so the repo's CLAUDE.md is loaded. Note
+          // that any `permissions.allow` rule in a loaded settings file
+          // pre-approves that tool inside the SDK, so `canUseTool` below never
+          // runs for it and no Slack prompt appears. See README § Security.
+          settingSources: this.config.settingSources,
+          // Read-only tools run unattended; everything else hits the buttons.
+          allowedTools: req.project.allowedTools ?? [
+            'Read',
+            'Glob',
+            'Grep',
+            'TodoWrite',
+          ],
+          canUseTool: async (toolName, input, opts) =>
+            this.approvals.request({
+              channel: req.channel,
+              threadTs: req.threadTs,
+              toolName,
+              input,
+              title: opts.title,
+              description: opts.description,
+              suggestions: opts.suggestions,
+              signal: opts.signal,
+            }),
+        },
+      });
+
+      for await (const message of response) {
+        if (controller.signal.aborted) break;
+
+        switch (message.type) {
+          case 'system':
+            if (message.subtype === 'init') {
+              sessionId = message.session_id;
+              this.sessions.set(req.channel, req.threadTs, sessionId);
+            }
+            break;
+
+          case 'assistant': {
+            for (const block of message.message.content) {
+              if (block.type === 'text' && block.text.trim()) {
+                sawText = true;
+                await this.say(req.channel, req.threadTs, block.text);
+              } else if (block.type === 'tool_use') {
+                await this.context(
+                  req.channel,
+                  req.threadTs,
+                  `:wrench: \`${block.name}\` — ${describeTool(
+                    block.name,
+                    (block.input ?? {}) as Record<string, unknown>,
+                  )}`,
+                );
+              }
+            }
+            break;
+          }
+
+          case 'result': {
+            if (message.subtype === 'success') {
+              // The final `result` text repeats the last assistant turn, so
+              // only post it when nothing else made it through.
+              if (!sawText && message.result.trim()) {
+                await this.say(req.channel, req.threadTs, message.result);
+              }
+              await this.context(
+                req.channel,
+                req.threadTs,
+                `:white_check_mark: Done · ${message.num_turns} turns · ` +
+                  `${formatDuration(message.duration_ms)} · ` +
+                  `${formatCost(message.total_cost_usd)}`,
+              );
+            } else {
+              await this.context(
+                req.channel,
+                req.threadTs,
+                `:warning: Ended early (\`${message.subtype}\`). ` +
+                  `Reply in this thread to continue.`,
+              );
+            }
+            break;
+          }
+
+          default:
+            // Partial messages, hook events, task updates — not surfaced.
+            break;
+        }
+      }
+    } catch (err) {
+      if (controller.signal.aborted) {
+        await this.context(
+          req.channel,
+          req.threadTs,
+          ':octagonal_sign: Stopped. The session is kept — reply here to pick it back up.',
+        );
+      } else {
+        const detail = err instanceof Error ? err.message : String(err);
+        await this.context(
+          req.channel,
+          req.threadTs,
+          `:x: Run failed: ${detail}`,
+        );
+      }
+    } finally {
+      // Do NOT abortAll() here — the broker is shared across threads, and
+      // other threads may have prompts legitimately awaiting an answer. Each
+      // pending prompt is already tied to its own run's abort signal.
+      this.active.delete(key);
+    }
+  }
+}

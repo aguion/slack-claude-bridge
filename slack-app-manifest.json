@@ -1,0 +1,42 @@
+{
+  "display_information": {
+    "name": "Claude Code Bridge",
+    "description": "Drive Claude Code on my laptop from Slack",
+    "background_color": "#1f1f1f"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Claude Code",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "im:read",
+        "im:write",
+        "chat:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups",
+        "message.im"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
