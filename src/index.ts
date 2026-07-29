@@ -2,12 +2,23 @@ import pkg from '@slack/bolt';
 const { App, LogLevel } = pkg;
 
 import { loadConfig, projectFor } from './config.js';
+import { InstanceLock } from './lock.js';
 import { SessionStore, ThreadQueue } from './store.js';
 import { ApprovalBroker, type Decision } from './approvals.js';
 import { Runner } from './runner.js';
 import { toolDetail } from './format.js';
 
 const config = loadConfig();
+
+// Before opening a socket: a second connection would silently take half the
+// events, so refuse to be the second bridge rather than corrupt the traffic.
+const lock = new InstanceLock(config.stateDir);
+try {
+  lock.acquire();
+} catch (err) {
+  console.error(`✗ ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
 
 const app = new App({
   token: config.botToken,
@@ -278,7 +289,9 @@ app.error(async (error) => {
 
 await app.start();
 
-console.log('Slack ↔ Claude Code bridge running (Socket Mode).');
+console.log(
+  `Slack ↔ Claude Code bridge running (Socket Mode), pid ${process.pid}.`,
+);
 console.log(`  projects:  ${Object.keys(config.projects).join(', ')}`);
 console.log(`  allowlist: ${[...config.allowedUsers].join(', ')}`);
 console.log(`  state:     ${config.stateDir}`);
@@ -301,6 +314,7 @@ const shutdown = async (code = 0) => {
   // Let the prompt rewrites land so no thread is left showing live buttons.
   await approvals.flush();
   await app.stop().catch(() => undefined);
+  lock.release();
   process.exit(code);
 };
 

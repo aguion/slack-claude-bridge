@@ -69,6 +69,22 @@ Keep the Mac awake while it runs, or macOS will sleep the socket:
 caffeinate -s npm start
 ```
 
+**Only one bridge may run at a time.** Slack load-balances Socket Mode events
+across every open connection, so a second process silently takes about half the
+traffic — and if it's running older code or a stale allowlist, the bot appears
+to work intermittently and ignore people at random. The bridge takes a lock at
+`~/.slack-claude-bridge/bridge.pid` on startup and a second instance refuses to
+start:
+
+```
+✗ another bridge is already running (pid 84955).
+  Slack splits events across both, so they would each answer part of the traffic.
+  Stop it first:  kill 84955
+```
+
+A pidfile left by a crash is detected and reclaimed, so a hard kill never wedges
+the next start.
+
 ---
 
 ## Using it
@@ -184,6 +200,7 @@ the Claude API as part of the conversation, same as it would in your terminal.
 | `src/store.ts` | Thread→session persistence and the per-thread queue |
 | `src/config.ts` | Env + `projects.json` loading and validation |
 | `src/format.ts` | Slack-safe chunking and tool-call summaries |
+| `src/lock.ts` | Single-instance pidfile lock |
 
 State lives in `~/.slack-claude-bridge/sessions.json` — a thread→session-ID
 map, capped at the 500 most recent threads. Delete it to forget every session.
@@ -200,6 +217,7 @@ is broken:
 ✓ bot token              marcel in Guion Consulting
 ✓ bot scopes             all 10 granted
 ✓ app token              socket mode can connect
+✓ instances              one bridge running (pid 84955)
 ✓ project C0BKUUJSAF8    /Users/you/sources/repo (auto)
 ✓ allowlist U0AUQMWL02F  Alex Guion
 ✓ channel C0BKUUJSAF8    #eng → repo
@@ -207,10 +225,10 @@ is broken:
 ```
 
 It checks the tokens, compares granted scopes against what
-`slack-app-manifest.json` requests (so the two can't drift), resolves every
-allowlisted member ID to a real person, and confirms the bot is actually a
-member of each mapped channel — the failure that otherwise looks like the bot
-ignoring you.
+`slack-app-manifest.json` requests (so the two can't drift), reports which
+bridge holds the lock, resolves every allowlisted member ID to a real person,
+and confirms the bot is actually a member of each mapped channel — the failure
+that otherwise looks like the bot ignoring you.
 
 Reach for it whenever the bot goes quiet. Silence usually means an event was
 never delivered, and that is almost always a missing scope or a channel the bot
@@ -235,5 +253,17 @@ live in memory only, so restarting the bridge abandons them.
 **A tool ran without asking.** Check that project's `allowedTools`, then the
 `permissions.allow` rules in whatever `SETTING_SOURCES` loads — see [What
 bypasses the prompt](#what-bypasses-the-prompt).
+
+**Answers some messages but not others, or ignores one person.** Two bridges
+were running and Slack was splitting events between them — the older process
+serves its own stale allowlist and code. `npm run doctor` reports which pid
+holds the lock; `ps ax | grep dist/index.js` shows any extras to kill. Since the
+single-instance lock this can't happen silently anymore, but a process started
+before the lock existed won't be holding one.
+
+**`:x: Run failed: API Error: 529 Overloaded`.** Upstream, not the bridge — the
+Claude API is shedding load. The SDK already retries internally, so a 529 that
+reaches Slack means the outage outlasted the retries. Check
+<https://status.claude.com> and reply in the thread to pick the session back up.
 
 **Disconnects overnight.** macOS slept. Run under `caffeinate -s`.

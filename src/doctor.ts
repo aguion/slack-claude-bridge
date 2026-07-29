@@ -154,6 +154,40 @@ async function checkChannels(config: Config, scopes: string[]): Promise<void> {
   }
 }
 
+/**
+ * Reports the running bridge, if any. Two live bridges split Slack's events
+ * between them, which looks like the bot answering only some of the time.
+ */
+function checkInstances(config: Config): void {
+  const pidfile = resolve(config.stateDir, 'bridge.pid');
+  let pid: number | undefined;
+  try {
+    const raw = Number(readFileSync(pidfile, 'utf8').trim());
+    if (Number.isInteger(raw) && raw > 0) pid = raw;
+  } catch {
+    record('ok', 'instances', 'no bridge running (nothing holds the lock)');
+    return;
+  }
+  if (pid === undefined) {
+    record('warn', 'instances', `${pidfile} is corrupt — next start will reclaim it`);
+    return;
+  }
+  let alive: boolean;
+  try {
+    process.kill(pid, 0);
+    alive = true;
+  } catch (err) {
+    alive = (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+  record(
+    'ok',
+    'instances',
+    alive
+      ? `one bridge running (pid ${pid})`
+      : `stale lock for pid ${pid} — next start will reclaim it`,
+  );
+}
+
 function checkProjects(config: Config): void {
   for (const [key, project] of Object.entries(config.projects)) {
     // loadConfig already threw if the path was missing or not a directory.
@@ -176,6 +210,7 @@ async function main(): Promise<void> {
   }
 
   const scopes = await checkTokens(config);
+  checkInstances(config);
   checkProjects(config);
   if (scopes.length) {
     await checkUsers(config, scopes);
