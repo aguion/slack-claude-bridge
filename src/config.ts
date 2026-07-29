@@ -43,6 +43,11 @@ export interface ProjectConfig {
   model?: string;
   /** Permission mode override for this project. Falls back to the global one. */
   permissionMode?: PermissionMode;
+  /**
+   * Extra standing instructions for this project, appended after the shared
+   * Slack policy. Adds to it — it cannot remove or override any of it.
+   */
+  appendSystemPrompt?: string;
 }
 
 export interface Config {

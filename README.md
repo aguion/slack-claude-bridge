@@ -190,6 +190,32 @@ map, capped at the 500 most recent threads. Delete it to forget every session.
 
 Run the tests with `npm test`.
 
+## Checking the setup
+
+`npm run doctor` verifies every part end to end and exits non-zero if anything
+is broken:
+
+```
+✓ config                 env and projects.json load cleanly
+✓ bot token              marcel in Guion Consulting
+✓ bot scopes             all 10 granted
+✓ app token              socket mode can connect
+✓ project C0BKUUJSAF8    /Users/you/sources/repo (auto)
+✓ allowlist U0AUQMWL02F  Alex Guion
+✓ channel C0BKUUJSAF8    #eng → repo
+✓ dms                    disabled
+```
+
+It checks the tokens, compares granted scopes against what
+`slack-app-manifest.json` requests (so the two can't drift), resolves every
+allowlisted member ID to a real person, and confirms the bot is actually a
+member of each mapped channel — the failure that otherwise looks like the bot
+ignoring you.
+
+Reach for it whenever the bot goes quiet. Silence usually means an event was
+never delivered, and that is almost always a missing scope or a channel the bot
+was never invited to.
+
 ## Troubleshooting
 
 **Bot doesn't respond to a mention.** It's probably not in the channel —

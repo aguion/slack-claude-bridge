@@ -24,7 +24,10 @@
         "im:history",
         "im:read",
         "im:write",
-        "chat:write"
+        "chat:write",
+        "users:read",
+        "channels:read",
+        "groups:read"
       ]
     }
   },

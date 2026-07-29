@@ -4,6 +4,7 @@ import type { ApprovalBroker } from './approvals.js';
 import type { Config, ProjectConfig } from './config.js';
 import type { SessionStore } from './store.js';
 import { chunk, describeTool, formatCost, formatDuration } from './format.js';
+import { buildSystemPromptAppend } from './policy.js';
 
 type WebClient = App['client'];
 
@@ -107,6 +108,14 @@ export class Runner {
           cwd: req.project.cwd,
           abortController: controller,
           maxTurns: this.config.maxTurns,
+          // The `preset` form appends to Claude Code's own system prompt. A
+          // bare string would replace it outright and lose the built-in tool
+          // guidance, which is not what we want here.
+          systemPrompt: {
+            type: 'preset',
+            preset: 'claude_code',
+            append: buildSystemPromptAppend(req.project.appendSystemPrompt),
+          },
           // 'auto' lets the SDK's classifier clear routine calls itself and
           // only escalates what it can't — the Slack buttons stay in place for
           // anything the classifier refuses to decide.
@@ -147,6 +156,15 @@ export class Runner {
             if (message.subtype === 'init') {
               sessionId = message.session_id;
               this.sessions.set(req.channel, req.threadTs, sessionId);
+            } else if (message.subtype === 'local_command_output') {
+              // A local slash command (`/usage`, and skills that resolve
+              // locally) bypasses the model loop entirely, so its output
+              // arrives here and nowhere else. Dropping it would leave the
+              // thread showing a run that started and finished in silence.
+              if (message.content.trim()) {
+                sawText = true;
+                await this.say(req.channel, req.threadTs, message.content);
+              }
             }
             break;
 
