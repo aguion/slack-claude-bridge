@@ -186,6 +186,12 @@ weight:
    prompt](#what-bypasses-the-prompt). If you set `allowedTools` to include
    `Bash`, you've handed that project's shell to the channel. Do it for repos
    you'd be fine with a teammate running commands in, not for everything.
+4. **Git is gated by a `PreToolUse` hook, not by the system prompt.** A hook
+   runs before `allowedTools`, the `auto` classifier, and any settings-file
+   allow rule, so it is the one check none of them can skip. `git push` and
+   `gh pr create` require a button; force-push, rebase, amend, branch/remote
+   deletion and any push to `main`/`master` are refused outright. See
+   `src/gitgate.ts` — the rules are a pure function with its own tests.
 
 Also worth knowing: private channel content and anything Claude reads flows to
 the Claude API as part of the conversation, same as it would in your terminal.
@@ -200,6 +206,8 @@ the Claude API as part of the conversation, same as it would in your terminal.
 | `src/store.ts` | Thread→session persistence and the per-thread queue |
 | `src/config.ts` | Env + `projects.json` loading and validation |
 | `src/format.ts` | Slack-safe chunking and tool-call summaries |
+| `src/gitgate.ts` | What git commands are refused, gated, or let through |
+| `src/activity.ts` | One rolling, updated-in-place message per run's tool calls |
 | `src/lock.ts` | Single-instance pidfile lock |
 
 State lives in `~/.slack-claude-bridge/sessions.json` — a thread→session-ID

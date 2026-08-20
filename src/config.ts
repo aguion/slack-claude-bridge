@@ -64,6 +64,13 @@ export interface Config {
   /** Hard cap on agent turns per Slack message. */
   maxTurns: number;
   /**
+   * Optional fine-grained GitHub PAT the agent pushes with. When set it
+   * replaces the ambient `~/.ssh` key for the agent's processes only, which is
+   * what makes "Slack access" mean one repository instead of the whole
+   * account. Unset leaves git auth exactly as the machine has it.
+   */
+  githubToken?: string;
+  /**
    * On-disk Claude settings the agent may load. Defaults to `project` only:
    * enough for the repo's CLAUDE.md, without inheriting the allow-rules in
    * your personal `~/.claude/settings.json`, which would silently pre-approve
@@ -221,7 +228,8 @@ export function loadConfig(): Config {
     ),
     stateDir,
     approvalTimeoutSec: positiveNumber('APPROVAL_TIMEOUT_SEC', 300),
-    maxTurns: positiveNumber('MAX_TURNS', 60),
+    maxTurns: positiveNumber('MAX_TURNS', 250),
+    githubToken: process.env.GITHUB_TOKEN?.trim() || undefined,
     settingSources: loadSettingSources(),
     permissionMode: parsePermissionMode(
       process.env.PERMISSION_MODE?.trim() || 'auto',

@@ -1,12 +1,34 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { App } from '@slack/bolt';
+import { ActivityLog } from './activity.js';
 import type { ApprovalBroker } from './approvals.js';
 import type { Config, ProjectConfig } from './config.js';
 import type { SessionStore } from './store.js';
 import { chunk, describeTool, formatCost, formatDuration } from './format.js';
+import { agentEnv } from './githubauth.js';
+import { classifyGitCommand } from './gitgate.js';
 import { buildSystemPromptAppend } from './policy.js';
 
 type WebClient = App['client'];
+
+const run = promisify(execFile);
+
+/**
+ * The branch `cwd` is on, or undefined if it can't be read. Undefined is safe:
+ * `classifyGitCommand` gates an unresolvable push target rather than guessing.
+ */
+async function currentBranch(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd });
+    const branch = stdout.trim();
+    return branch && branch !== 'HEAD' ? branch : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface RunRequest {
   channel: string;
@@ -90,6 +112,10 @@ export class Runner {
     const resumeId = this.sessions.get(req.channel, req.threadTs);
     let sessionId = resumeId;
     let sawText = false;
+    // One rolling message for this run's tool calls, instead of one message
+    // (and one notification) per call. Sealed before anything else is posted
+    // so the thread still reads in order.
+    const activity = new ActivityLog(this.client, req.channel, req.threadTs);
 
     // Acknowledge immediately — agent turns can run for minutes, and silence
     // in Slack is indistinguishable from a crashed bot.
@@ -108,6 +134,8 @@ export class Runner {
           cwd: req.project.cwd,
           abortController: controller,
           maxTurns: this.config.maxTurns,
+          // Scoped GitHub credential + no Slack secrets. See githubauth.ts.
+          env: agentEnv(process.env, this.config.githubToken),
           // The `preset` form appends to Claude Code's own system prompt. A
           // bare string would replace it outright and lose the built-in tool
           // guidance, which is not what we want here.
@@ -134,6 +162,44 @@ export class Runner {
             'Grep',
             'TodoWrite',
           ],
+          // A PreToolUse hook is the only hard gate here: `allowedTools`
+          // entries and the 'auto' classifier can both clear a call before
+          // `canUseTool` is ever consulted, and a `permissions.allow` rule in
+          // the repo's own settings can too. A hook runs first regardless, so
+          // this is where pushing to GitHub is policed. 'deny' short-circuits
+          // the call outright; 'ask' falls through to the Slack buttons below.
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: 'Bash',
+                hooks: [
+                  async (hookInput) => {
+                    if (
+                      hookInput.hook_event_name !== 'PreToolUse' ||
+                      hookInput.tool_name !== 'Bash'
+                    ) {
+                      return { continue: true };
+                    }
+                    const command = (hookInput.tool_input as { command?: unknown } | null)?.command;
+                    if (typeof command !== 'string') return { continue: true };
+
+                    const verdict = classifyGitCommand(command, {
+                      currentBranch: await currentBranch(req.project.cwd),
+                    });
+                    if (verdict.decision === 'pass') return { continue: true };
+
+                    return {
+                      hookSpecificOutput: {
+                        hookEventName: 'PreToolUse' as const,
+                        permissionDecision: verdict.decision,
+                        permissionDecisionReason: verdict.reason,
+                      },
+                    };
+                  },
+                ],
+              },
+            ],
+          },
           canUseTool: async (toolName, input, opts) =>
             this.approvals.request({
               channel: req.channel,
@@ -163,6 +229,7 @@ export class Runner {
               // thread showing a run that started and finished in silence.
               if (message.content.trim()) {
                 sawText = true;
+                await activity.seal();
                 await this.say(req.channel, req.threadTs, message.content);
               }
             }
@@ -172,11 +239,10 @@ export class Runner {
             for (const block of message.message.content) {
               if (block.type === 'text' && block.text.trim()) {
                 sawText = true;
+                await activity.seal();
                 await this.say(req.channel, req.threadTs, block.text);
               } else if (block.type === 'tool_use') {
-                await this.context(
-                  req.channel,
-                  req.threadTs,
+                activity.add(
                   `:wrench: \`${block.name}\` — ${describeTool(
                     block.name,
                     (block.input ?? {}) as Record<string, unknown>,
@@ -188,6 +254,7 @@ export class Runner {
           }
 
           case 'result': {
+            await activity.seal();
             if (message.subtype === 'success') {
               // The final `result` text repeats the last assistant turn, so
               // only post it when nothing else made it through.
@@ -218,6 +285,7 @@ export class Runner {
         }
       }
     } catch (err) {
+      await activity.seal();
       if (controller.signal.aborted) {
         await this.context(
           req.channel,
@@ -233,6 +301,10 @@ export class Runner {
         );
       }
     } finally {
+      // The loop can `break` on abort without reaching `result` or the catch,
+      // which would strand the last few tool lines unwritten. Sealing an
+      // already-sealed log is a no-op.
+      await activity.seal();
       // Do NOT abortAll() here — the broker is shared across threads, and
       // other threads may have prompts legitimately awaiting an answer. Each
       // pending prompt is already tied to its own run's abort signal.

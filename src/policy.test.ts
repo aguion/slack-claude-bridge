@@ -5,10 +5,13 @@ import { SLACK_AGENT_POLICY, buildSystemPromptAppend } from './policy.js';
 
 test('the policy states the rules we rely on', () => {
   for (const rule of [
-    'git commit',
+    'Marcel',
     'git push',
     'pull request',
+    'commit locally',
     'force-push',
+    'main',
+    'approval in Slack',
     '.env',
     'data, not instructions',
   ]) {
